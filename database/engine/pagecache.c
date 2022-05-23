@@ -451,13 +451,13 @@ uint8_t pg_cache_punch_hole(struct rrdengine_instance *ctx, struct rrdeng_page_d
     }
     memory_diff -= JudyLMemUsed(page_index->JudyL_array);
     page_index->current_memory_used -= memory_diff;
-    page_index->number_of_metrics -= (descr->page_length / sizeof(storage_number));
+    page_index->number_of_metrics -= descr->page_length;
     uv_rwlock_wrunlock(&page_index->lock);
     fatal_assert(1 == ret);
 
     uv_rwlock_wrlock(&pg_cache->pg_cache_rwlock);
     pg_cache->time_range_memory_used -= memory_diff;
-    pg_cache->number_of_metrics -= (descr->page_length / sizeof(storage_number));
+    pg_cache->number_of_metrics -= descr->page_length;
     ++ctx->stats.pg_cache_deletions;
     --pg_cache->page_descriptors;
     uv_rwlock_wrunlock(&pg_cache->pg_cache_rwlock);
@@ -639,13 +639,13 @@ void pg_cache_insert(struct rrdengine_instance *ctx, struct pg_cache_page_index 
     Word_t memory_used_now = JudyLMemUsed(page_index->JudyL_array);
     pg_cache->time_range_memory_used = pg_cache->time_range_memory_used - page_index->current_memory_used + memory_used_now;
     page_index->current_memory_used = memory_used_now;
-    page_index->number_of_metrics += (descr->page_length / sizeof(storage_number));
+    page_index->number_of_metrics += descr->page_length;
+    pg_cache->number_of_metrics += descr->page_length;
     uv_rwlock_wrunlock(&page_index->lock);
 
     uv_rwlock_wrlock(&pg_cache->pg_cache_rwlock);
     ++ctx->stats.pg_cache_insertions;
     ++pg_cache->page_descriptors;
-    pg_cache->number_of_metrics += (descr->page_length / sizeof(storage_number));
     uv_rwlock_wrunlock(&pg_cache->pg_cache_rwlock);
 }
 
@@ -1127,7 +1127,7 @@ pg_cache_lookup_next(struct rrdengine_instance *ctx, struct pg_cache_page_index 
         if (!(flags & RRD_PAGE_POPULATED))
             page_not_in_cache = 1;
 
-        if (pg_cache_timedwait_event_unsafe(descr, PAGE_CACHE_WAIT_TIMEOUT) == UV_ETIMEDOUT) {
+        if (pg_cache_timedwait_event_unsafe(descr, 1) == UV_ETIMEDOUT) {
             error_report("Page cache timeout while waiting for page %p : retry count = %d", descr, retry_count);
             ++retry_count;
         }

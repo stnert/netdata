@@ -752,7 +752,7 @@ int rrdpush_receiver_thread_spawn(struct web_client *w, char *url) {
         host->senders_disconnected_time = 0;
         if (host->receiver != NULL) {
             time_t age = now_realtime_sec() - host->receiver->last_msg_t;
-            if (age > 30 || 1) {
+            if (age > 30) {
                 host->receiver->shutdown = 1;
                 shutdown(host->receiver->fd, SHUT_RDWR);
                 host->receiver = NULL;      // Thread holds reference to structure

@@ -143,29 +143,18 @@ PARSER_RC pluginsd_dimension_action(void *user, RRDSET *st, char *id, char *name
     } else
         rrddim_isnot_obsolete(st, rd);
 
-    struct metadata_database_cmd cmd;
-
     if (likely(unhide_dimension)) {
         rrddim_flag_clear(rd, RRDDIM_FLAG_HIDDEN);
-        if (rrddim_flag_check(rd, RRDDIM_FLAG_META_HIDDEN))
+        if (rrddim_flag_check(rd, RRDDIM_FLAG_META_HIDDEN)) {
+            (void)sql_set_dimension_option(&rd->state->metric_uuid, NULL);
             rrddim_flag_clear(rd, RRDDIM_FLAG_META_HIDDEN);
-        else
-            unhide_dimension = -1;
+        }
     } else {
         rrddim_flag_set(rd, RRDDIM_FLAG_HIDDEN);
-        if (!rrddim_flag_check(rd, RRDDIM_FLAG_META_HIDDEN))
-           rrddim_flag_set(rd, RRDDIM_FLAG_META_HIDDEN);
-        else
-            unhide_dimension = -1;
-    }
-
-    if (unlikely(unhide_dimension != -1 && !rrddim_flag_check(rd, RRDDIM_FLAG_OBSOLETE))) {
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.opcode = METADATA_ADD_DIMENSION_OPTION;
-        INC(st->state->metadata_update_count);
-        cmd.param[0] = (void *)rd;
-        cmd.param[1] = unhide_dimension ? NULL : strdupz("hidden");
-        metadata_database_enq_cmd(&metasync_worker, &cmd);
+        if (!rrddim_flag_check(rd, RRDDIM_FLAG_META_HIDDEN)) {
+           (void)sql_set_dimension_option(&rd->state->metric_uuid, "hidden");
+            rrddim_flag_set(rd, RRDDIM_FLAG_META_HIDDEN);
+        }
     }
     return PARSER_RC_OK;
 }

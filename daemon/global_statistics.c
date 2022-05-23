@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "common.h"
-#ifdef ENABLE_DBENGINE
-#include "database/engine/rrdengineapi.h"
-#endif
 
 #define GLOBAL_STATS_RESET_WEB_USEC_MAX 0x01
 
@@ -459,7 +456,7 @@ static void dbengine_statistics_charts(void) {
 
         rrdhost_foreach_read(host) {
             if (host->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE && !rrdhost_flag_check(host, RRDHOST_FLAG_ARCHIVED)) {
-                if (host->rrdeng_ctx == host->rrdeng_ctx->engine->context) {
+                if (&multidb_ctx == host->rrdeng_ctx) {
                     if (counted_multihost_db)
                         continue; /* Only count multi-host DB once */
                     counted_multihost_db = 1;
@@ -673,8 +670,8 @@ static void dbengine_statistics_charts(void) {
                         NULL,
                         "dbengine",
                         NULL,
-                        "Netdata dbengine metrics statistics",
-                        "metrics",
+                        "Netdata dbengine metric statistics",
+                        "pages",
                         "netdata",
                         "stats",
                         132005,
@@ -1020,7 +1017,6 @@ static struct worker_utilization all_workers_utilization[] = {
     { .name = "WEB",         .family = "workers web server",              .priority = 1000000 },
     { .name = "ACLKQUERY",   .family = "workers aclk query",              .priority = 1000000 },
     { .name = "ACLKSYNC",    .family = "workers aclk host sync",          .priority = 1000000 },
-    { .name = "METASYNC",    .family = "workers metadata sync",           .priority = 1000000 },
     { .name = "PLUGINSD",    .family = "workers plugins.d",               .priority = 1000000 },
     { .name = "STATSD",      .family = "workers plugin statsd",           .priority = 1000000 },
     { .name = "STATSDFLUSH", .family = "workers plugin statsd flush",     .priority = 1000000 },

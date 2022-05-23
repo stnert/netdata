@@ -168,17 +168,22 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         rc += rrddim_set_algorithm(st, rd, algorithm);
         rc += rrddim_set_multiplier(st, rd, multiplier);
         rc += rrddim_set_divisor(st, rd, divisor);
+        if (rrddim_flag_check(rd, RRDDIM_FLAG_ARCHIVED)) {
+            store_active_dimension(&rd->state->metric_uuid);
+            rd->state->collect_ops.init(rd);
+            rrddim_flag_clear(rd, RRDDIM_FLAG_ARCHIVED);
+            rrddimvar_create(rd, RRDVAR_TYPE_CALCULATED, NULL, NULL, &rd->last_stored_value, RRDVAR_OPTION_DEFAULT);
+            rrddimvar_create(rd, RRDVAR_TYPE_COLLECTED, NULL, "_raw", &rd->last_collected_value, RRDVAR_OPTION_DEFAULT);
+            rrddimvar_create(rd, RRDVAR_TYPE_TIME_T, NULL, "_last_collected_t", &rd->last_collected_time.tv_sec, RRDVAR_OPTION_DEFAULT);
+
+            rrddim_flag_set(rd, RRDDIM_FLAG_PENDING_FOREACH_ALARM);
+            rrdset_flag_set(st, RRDSET_FLAG_PENDING_FOREACH_ALARMS);
+            rrdhost_flag_set(host, RRDHOST_FLAG_PENDING_FOREACH_ALARMS);
+        }
         if (unlikely(rc)) {
             debug(D_METADATALOG, "DIMENSION [%s] metadata updated", rd->id);
-
-            struct metadata_database_cmd cmd;
-            memset(&cmd, 0, sizeof(cmd));
-            cmd.opcode = METADATA_ADD_DIMENSION;
-            rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-            cmd.param[0] = (void *)rd;
-            metadata_database_enq_cmd(&metasync_worker, &cmd);
-//            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
-//                                      rd->algorithm);
+            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
+                                      rd->algorithm);
 #if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
             queue_dimension_to_aclk(rd, calc_dimension_liveness(rd, now_realtime_sec()));
 #endif
@@ -338,13 +343,7 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         rrdeng_metric_init(rd);
     }
 #endif
-//    struct metadata_database_cmd cmd;
-//    memset(&cmd, 0, sizeof(cmd));
-//    cmd.opcode = METADATA_ADD_DIMENSION_ACTIVE;
-//    rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-//    cmd.param[0] = (void *)rd;
-//    metadata_database_enq_cmd(&metasync_worker, &cmd);
-    //store_active_dimension(&rd->state->metric_uuid);
+    store_active_dimension(&rd->state->metric_uuid);
     rd->state->collect_ops.init(rd);
     // append this dimension
     if(!st->dimensions)
@@ -396,25 +395,17 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
 
 void rrddim_free(RRDSET *st, RRDDIM *rd)
 {
-    int deleting = 0;
-    if (rrd_atomic_fetch_add(&rd->state->metadata_update_count, 0)) {
-        info("DELETING dimension which is pending! --> %s (%p)", rd->id, rd);
-        rrddim_flag_set(rd, RRDDIM_FLAG_DELETED);
-        deleting = 1;
-    }
     ml_delete_dimension(rd);
     
     debug(D_RRD_CALLS, "rrddim_free() %s.%s", st->name, rd->name);
 
-    uint8_t can_delete_metric = rd->state->collect_ops.finalize(rd);
-    if (can_delete_metric && rd->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
-        /* This metric has no data and no references */
-        delete_dimension_uuid(&rd->state->metric_uuid);
+    if (!rrddim_flag_check(rd, RRDDIM_FLAG_ARCHIVED)) {
+        uint8_t can_delete_metric = rd->state->collect_ops.finalize(rd);
+        if (can_delete_metric && rd->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+            /* This metric has no data and no references */
+            delete_dimension_uuid(&rd->state->metric_uuid);
+        }
     }
-#if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
-    else
-        queue_dimension_to_aclk(rd, rd->last_collected_time.tv_sec);
-#endif
 
     if(rd == st->dimensions)
         st->dimensions = rd->next;
@@ -451,9 +442,7 @@ void rrddim_free(RRDSET *st, RRDDIM *rd)
             freez((void *)rd->name);
             freez(rd->cache_filename);
             freez(rd->state);
-            if (!deleting) {
-                munmap(rd, rd->memsize);
-            }
+            munmap(rd, rd->memsize);
             break;
 
         case RRD_MEMORY_MODE_ALLOC:
@@ -464,8 +453,7 @@ void rrddim_free(RRDSET *st, RRDDIM *rd)
             freez((void *)rd->name);
             freez(rd->cache_filename);
             freez(rd->state);
-            if (!deleting)
-                freez(rd);
+            freez(rd);
             break;
     }
 }
@@ -512,6 +500,10 @@ int rrddim_unhide(RRDSET *st, const char *id) {
 inline void rrddim_is_obsolete(RRDSET *st, RRDDIM *rd) {
     debug(D_RRD_CALLS, "rrddim_is_obsolete() for chart %s, dimension %s", st->name, rd->name);
 
+    if(unlikely(rrddim_flag_check(rd, RRDDIM_FLAG_ARCHIVED))) {
+        info("Cannot obsolete already archived dimension %s from chart %s", rd->name, st->name);
+        return;
+    }
     rrddim_flag_set(rd, RRDDIM_FLAG_OBSOLETE);
     rrdset_flag_set(st, RRDSET_FLAG_OBSOLETE_DIMENSIONS);
 }

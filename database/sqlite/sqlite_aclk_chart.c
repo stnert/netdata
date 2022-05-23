@@ -2,9 +2,6 @@
 
 #include "sqlite_functions.h"
 #include "sqlite_aclk_chart.h"
-#ifdef ENABLE_DBENGINE
-#include "../engine/rrdengineapi.h"
-#endif
 
 #if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
 #include "../../aclk/aclk_charts_api.h"
@@ -25,7 +22,7 @@ sql_queue_chart_payload(struct aclk_database_worker_config *wc, void *data, enum
     return rc;
 }
 
-static time_t payload_sent(char *uuid_str, uuid_t *uuid, void *payload, size_t payload_size, uuid_t *unique_id)
+static time_t payload_sent(char *uuid_str, uuid_t *uuid, void *payload, size_t payload_size)
 {
     static __thread sqlite3_stmt *res = NULL;
     int rc;
@@ -36,18 +33,12 @@ static time_t payload_sent(char *uuid_str, uuid_t *uuid, void *payload, size_t p
         snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "SELECT acl.date_submitted FROM aclk_chart_latest_%s acl, aclk_chart_payload_%s acp "
             "WHERE acl.unique_id = acp.unique_id AND acl.uuid = @uuid AND acp.payload = @payload;",
                   uuid_str, uuid_str);
-//        snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "SELECT acl.date_submitted FROM aclk_chart_latest_%s acl "
-//            "WHERE acl.unique_id = @unique_id", uuid_str);
         rc = prepare_statement(db_meta, sql, &res);
         if (rc != SQLITE_OK) {
             error_report("Failed to prepare statement to check payload data on %s", sql);
             return 0;
         }
     }
-
-//    rc = sqlite3_bind_blob(res, 1, unique_id, sizeof(*unique_id), SQLITE_STATIC);
-//    if (unlikely(rc != SQLITE_OK))
-//        goto bind_fail;
 
     rc = sqlite3_bind_blob(res, 1, uuid, sizeof(*uuid), SQLITE_STATIC);
     if (unlikely(rc != SQLITE_OK))
@@ -84,38 +75,12 @@ static int aclk_add_chart_payload(
     if (unlikely(!payload))
         return 0;
 
-    uuid_t unique_uuid;
-    uuid_generate(unique_uuid);
-
-//    EVP_MD_CTX *evpctx;
-//    unsigned char hash_value[EVP_MAX_MD_SIZE];
-//    unsigned int hash_len;
-//
-//    evpctx = EVP_MD_CTX_create();
-//    EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
-//    EVP_DigestUpdate(evpctx, payload, payload_size);
-//    EVP_DigestUpdate(evpctx, uuid, sizeof(*uuid));
-//    EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
-//    EVP_MD_CTX_destroy(evpctx);
-//    fatal_assert(hash_len > sizeof(uuid_t));
-//    uuid_copy(unique_uuid, *((uuid_t *)&hash_value));
-
-//    char uuid_str1[GUID_LEN + 1];
-//    char uuid_str2[GUID_LEN + 1];
-//    uuid_unparse_lower(unique_uuid, uuid_str1);
-//    uuid_unparse_lower(*uuid, uuid_str2);
-
-//    info("DEBUG: Generated unique %s for uuid=%s", uuid_str1, uuid_str2);
-
     if (check_sent) {
-        date_submitted = payload_sent(wc->uuid_str, uuid, payload, payload_size, &unique_uuid);
+        date_submitted = payload_sent(wc->uuid_str, uuid, payload, payload_size);
         if (send_status)
             *send_status = date_submitted;
-        if (date_submitted) {
-//            info("DEBUG: unique %s for uuid=%s -- already sent", uuid_str1, uuid_str2);
+        if (date_submitted)
             return 0;
-        }
-//        info("DEBUG: unique %s for uuid=%s -- adding new entry", uuid_str1, uuid_str2);
     }
 
     if (unlikely(!res_chart)) {
@@ -129,6 +94,9 @@ static int aclk_add_chart_payload(
             return 1;
         }
     }
+
+    uuid_t unique_uuid;
+    uuid_generate(unique_uuid);
 
     uuid_t claim_uuid;
     if (uuid_parse(claim_id, claim_uuid))
@@ -357,6 +325,12 @@ void aclk_send_chart_event(struct aclk_database_worker_config *wc, struct aclk_d
     char sql[ACLK_SYNC_QUERY_SIZE];
     static __thread sqlite3_stmt *res = NULL;
 
+    char *hostname = NULL;
+    if (wc->host)
+        hostname = strdupz(wc->host->hostname);
+    else
+        hostname = get_hostname_by_node_id(wc->node_id);
+
     if (unlikely(!res)) {
         snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1,"SELECT ac.sequence_id, acp.payload, ac.date_created, ac.type, ac.uuid  " \
              "FROM aclk_chart_%s ac, aclk_chart_payload_%s acp " \
@@ -366,6 +340,7 @@ void aclk_send_chart_event(struct aclk_database_worker_config *wc, struct aclk_d
         if (rc != SQLITE_OK) {
             error_report("Failed to prepare statement when trying to send a chart update via ACLK");
             freez(claim_id);
+            freez(hostname);
             return;
         }
     }
@@ -439,7 +414,7 @@ void aclk_send_chart_event(struct aclk_database_worker_config *wc, struct aclk_d
             log_access(
                 "ACLK RES [%s (%s)]: CHARTS SENT from %" PRIu64 " to %" PRIu64 " batch=%" PRIu64,
                 wc->node_id,
-                wc->hostname ? wc->hostname : "N/A",
+                hostname ? hostname : "N/A",
                 first_sequence,
                 last_sequence,
                 wc->batch_id);
@@ -460,7 +435,7 @@ void aclk_send_chart_event(struct aclk_database_worker_config *wc, struct aclk_d
             log_access(
                 "ACLK STA [%s (%s)]: Sync of charts and dimensions done in %ld seconds.",
                 wc->node_id,
-                wc->hostname ? wc->hostname : "N/A",
+                hostname ? hostname : "N/A",
                 now_realtime_sec() - wc->startup_time);
     }
 
@@ -479,6 +454,7 @@ bind_fail:
         error_report("Failed to reset statement when pushing chart events, rc = %d", rc);
 
     freez(claim_id);
+    freez(hostname);
     return;
 }
 
@@ -603,8 +579,13 @@ void aclk_receive_chart_reset(struct aclk_database_worker_config *wc, struct acl
         cmd.param1);
     db_execute(buffer_tostring(sql));
     if (cmd.param1 == 1) {
+        char *hostname = NULL;
+        if (wc->host)
+            hostname = strdupz(wc->host->hostname);
+        else
+            hostname = get_hostname_by_node_id(wc->node_id);
         buffer_flush(sql);
-        log_access("ACLK REQ [%s (%s)]: Received chart full resync.", wc->node_id, wc->hostname ? wc->hostname: "N/A");
+        log_access("ACLK REQ [%s (%s)]: Received chart full resync.", wc->node_id, hostname? hostname : "N/A");
         buffer_sprintf(sql, "DELETE FROM aclk_chart_payload_%s; DELETE FROM aclk_chart_%s; " \
                             "DELETE FROM aclk_chart_latest_%s;", wc->uuid_str, wc->uuid_str, wc->uuid_str);
         db_lock();
@@ -637,11 +618,12 @@ void aclk_receive_chart_reset(struct aclk_database_worker_config *wc, struct acl
             rrdhost_unlock(host);
         } else
             error_report("ACLK synchronization thread for %s is not linked to HOST", wc->host_guid);
+        freez(hostname);
     } else {
         log_access(
             "ACLK STA [%s (%s)]: RESTARTING CHART SYNC FROM SEQUENCE %" PRIu64,
             wc->node_id,
-            wc->hostname ? wc->hostname : "N/A",
+            wc->host ? wc->host->hostname : "N/A",
             cmd.param1);
         wc->chart_payload_count = sql_get_pending_count(wc);
         sql_get_last_chart_sequence(wc);
@@ -742,7 +724,12 @@ void aclk_start_streaming(char *node_id, uint64_t sequence_id, time_t created_at
                 wc = (struct aclk_database_worker_config *)host->dbsync_worker ?
                          (struct aclk_database_worker_config *)host->dbsync_worker :
                          (struct aclk_database_worker_config *)find_inactive_wc_by_node_id(node_id);
+            char *hostname = NULL;
             if (likely(wc)) {
+                if (wc->host)
+                    hostname = strdupz(wc->host->hostname);
+                else
+                    hostname = get_hostname_by_node_id(node_id);
                 wc->chart_reset_count++;
                 __sync_synchronize();
                 wc->chart_updates = 0;
@@ -752,7 +739,7 @@ void aclk_start_streaming(char *node_id, uint64_t sequence_id, time_t created_at
                 log_access(
                     "ACLK REQ [%s (%s)]: CHARTS STREAM from %"PRIu64" (LOCAL %"PRIu64") t=%ld resets=%d" ,
                     wc->node_id,
-                    wc->hostname ? wc->hostname : "N/A",
+                    hostname ? hostname : "N/A",
                     sequence_id + 1,
                     wc->chart_sequence_id,
                     wc->chart_timestamp,
@@ -762,7 +749,7 @@ void aclk_start_streaming(char *node_id, uint64_t sequence_id, time_t created_at
                         "ACLK RES [%s (%s)]: CHARTS FULL RESYNC REQUEST "
                         "remote_seq=%" PRIu64 " local_seq=%" PRIu64 " resets=%d ",
                         wc->node_id,
-                        wc->hostname ? wc->hostname : "N/A",
+                        hostname ? hostname : "N/A",
                         sequence_id,
                         wc->chart_sequence_id,
                         wc->chart_reset_count);
@@ -785,7 +772,7 @@ void aclk_start_streaming(char *node_id, uint64_t sequence_id, time_t created_at
                         log_access(
                             "ACLK REQ [%s (%s)]: CHART RESET from %" PRIu64 " t=%ld batch=%" PRIu64,
                             wc->node_id,
-                            wc->hostname ? wc->hostname : "N/A",
+                            hostname ? hostname : "N/A",
                             sequence_id + 1,
                             wc->chart_timestamp,
                             wc->batch_id);
@@ -799,8 +786,10 @@ void aclk_start_streaming(char *node_id, uint64_t sequence_id, time_t created_at
                     }
                 }
             } else {
-                log_access("ACLK STA [%s (%s)]: ACLK synchronization thread is not active.", node_id, wc->hostname ? wc->hostname : "N/A");
+                hostname = get_hostname_by_node_id(node_id);
+                log_access("ACLK STA [%s (%s)]: ACLK synchronization thread is not active.", node_id, hostname ? hostname : "N/A");
             }
+            freez(hostname);
             return;
         }
         host = host->next;
@@ -1003,12 +992,17 @@ void aclk_update_retention(struct aclk_database_worker_config *wc)
         rotate_data.interval_duration_count++;
     }
 
+    char *hostname = NULL;
+    if (!wc->host)
+        hostname = get_hostname_by_node_id(wc->node_id);
+
     if (dimension_update_count < ACLK_MAX_DIMENSION_CLEANUP && !netdata_exit)
         log_access("ACLK STA [%s (%s)]: UPDATES %d RETENTION MESSAGE SENT. CHECKED %u DIMENSIONS.  %u DELETED, %u STOPPED COLLECTING",
-                   wc->node_id, wc->hostname ? wc->hostname : "N/A", wc->chart_updates, total_checked, total_deleted, total_stopped);
+                   wc->node_id, wc->host ? wc->host->hostname : hostname ? hostname : "N/A", wc->chart_updates, total_checked, total_deleted, total_stopped);
     else
         log_access("ACLK STA [%s (%s)]: UPDATES %d RETENTION MESSAGE NOT SENT. CHECKED %u DIMENSIONS.  %u DELETED, %u STOPPED COLLECTING",
-                   wc->node_id, wc->hostname ? wc->hostname : "N/A", wc->chart_updates, total_checked, total_deleted, total_stopped);
+                   wc->node_id, wc->host ? wc->host->hostname : hostname ? hostname : "N/A", wc->chart_updates, total_checked, total_deleted, total_stopped);
+    freez(hostname);
 
 #ifdef NETDATA_INTERNAL_CHECKS
     info("Retention update for %s (chart updates = %d)", wc->host_guid, wc->chart_updates);

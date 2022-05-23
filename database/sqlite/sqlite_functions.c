@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "sqlite_functions.h"
-#ifdef ENABLE_DBENGINE
-#include "../engine/rrdengineapi.h"
-#endif
-#include "database/storage_engine.h"
 
 #define DB_METADATA_VERSION "1"
 
@@ -23,8 +19,7 @@ const char *database_config[] = {
     "CREATE TABLE IF NOT EXISTS chart_active(chart_id blob PRIMARY KEY, date_created int);",
     "CREATE TABLE IF NOT EXISTS dimension_active(dim_id blob primary key, date_created int);",
     "CREATE TABLE IF NOT EXISTS metadata_migration(filename text, file_size, date_created int);",
-    "DROP INDEX IF EXISTS ind_d1;",
-    "CREATE INDEX IF NOT EXISTS ind_d2 on dimension (chart_id, name);",
+    "CREATE INDEX IF NOT EXISTS ind_d1 on dimension (chart_id, id, name);",
     "CREATE INDEX IF NOT EXISTS ind_c1 on chart (host_id, id, type, name);",
     "CREATE TABLE IF NOT EXISTS chart_label(chart_id blob, source_type int, label_key text, "
     "label_value text, date_created int, PRIMARY KEY (chart_id, label_key));",
@@ -57,7 +52,6 @@ const char *database_config[] = {
     "INSERT INTO chart_hash_map (chart_id, hash_id) values (new.chart_id, new.hash_id) "
     "on conflict (chart_id, hash_id) do nothing; END; ",
 
-    "PRAGMA threads=4;",
     "PRAGMA user_version="DB_METADATA_VERSION";",
     NULL
 };
@@ -73,9 +67,6 @@ const char *database_cleanup[] = {
 };
 
 sqlite3 *db_meta = NULL;
-
-#define MAX_PREPARED_STATEMENTS (32)
-pthread_key_t key_pool[MAX_PREPARED_STATEMENTS];
 
 static uv_mutex_t sqlite_transaction_lock;
 
@@ -105,10 +96,6 @@ static void add_stmt_to_list(sqlite3_stmt *res)
     static sqlite3_stmt *statements[MAX_OPEN_STATEMENTS];
 
     if (unlikely(!res)) {
-        if (idx)
-            info("Finilizing %d statements", idx);
-        else
-            info("No statements pending to finalize");
         while (idx > 0) {
             int rc;
             rc = sqlite3_finalize(statements[--idx]);
@@ -120,32 +107,13 @@ static void add_stmt_to_list(sqlite3_stmt *res)
 
     if (unlikely(idx == MAX_OPEN_STATEMENTS))
         return;
+    statements[idx++] = res;
 }
 
-static void release_statement(void *statement)
-{
-    int rc;
-    if (unlikely(rc = sqlite3_finalize((sqlite3_stmt *) statement) != SQLITE_OK))
-        error_report("Failed to finalize statement, rc = %d", rc);
-}
-
-int prepare_statement(sqlite3 *database, char *query, sqlite3_stmt **statement)
-{
-    static __thread uint32_t keys_used = 0;
-
-    pthread_key_t *key = NULL;
-    int ret = 1;
-
-    if (likely(keys_used < MAX_PREPARED_STATEMENTS))
-        key = &key_pool[keys_used++];
-
+int prepare_statement(sqlite3 *database, char *query, sqlite3_stmt **statement) {
     int rc = sqlite3_prepare_v2(database, query, -1, statement, 0);
-    if (likely(rc == SQLITE_OK)) {
-        if (likely(key))
-            ret = pthread_setspecific(*key, *statement);
-        if (ret)
-            add_stmt_to_list(*statement);
-    }
+    if (likely(rc == SQLITE_OK))
+        add_stmt_to_list(*statement);
     return rc;
 }
 
@@ -154,82 +122,82 @@ int prepare_statement(sqlite3 *database, char *query, sqlite3_stmt **statement)
  * The statement that will be prepared determines that
  */
 
-//static int store_active_uuid_object(sqlite3_stmt **res, char *statement, uuid_t *uuid)
-//{
-//    int rc;
-//
-//    // Check if we should need to prepare the statement
-//    if (!*res) {
-//        rc = prepare_statement(db_meta, statement, res);
-//        if (unlikely(rc != SQLITE_OK)) {
-//            error_report("Failed to prepare statement to store active object, rc = %d", rc);
-//            return rc;
-//        }
-//    }
-//
-//    rc = sqlite3_bind_blob(*res, 1, uuid, sizeof(*uuid), SQLITE_STATIC);
-//    if (unlikely(rc != SQLITE_OK))
-//        error_report("Failed to bind input parameter to store active object, rc = %d", rc);
-//    else
-//        rc = execute_insert(*res);
-//    return rc;
-//}
+static int store_active_uuid_object(sqlite3_stmt **res, char *statement, uuid_t *uuid)
+{
+    int rc;
 
-///*
-// * Marks a chart with UUID as active
-// * Input: UUID
-// */
-//void store_active_chart(uuid_t *chart_uuid)
-//{
-//    static __thread sqlite3_stmt *res = NULL;
-//    int rc;
-//
-//    if (unlikely(!db_meta)) {
-//        if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)
-//            error_report("Database has not been initialized");
-//        return;
-//    }
-//
-//    if (unlikely(!chart_uuid))
-//        return;
-//
-//    rc = store_active_uuid_object(&res, SQL_STORE_ACTIVE_CHART, chart_uuid);
-//    if (rc != SQLITE_DONE)
-//        error_report("Failed to store active chart, rc = %d", rc);
-//
-//    rc = sqlite3_reset(res);
-//    if (unlikely(rc != SQLITE_OK))
-//        error_report("Failed to finalize statement in store active chart, rc = %d", rc);
-//    return;
-//}
+    // Check if we should need to prepare the statement
+    if (!*res) {
+        rc = prepare_statement(db_meta, statement, res);
+        if (unlikely(rc != SQLITE_OK)) {
+            error_report("Failed to prepare statement to store active object, rc = %d", rc);
+            return rc;
+        }
+    }
 
-///*
-// * Marks a dimension with UUID as active
-// * Input: UUID
-// */
-//void store_active_dimension(uuid_t *dimension_uuid)
-//{
-//    static __thread sqlite3_stmt *res = NULL;
-//    int rc;
-//
-//    if (unlikely(!db_meta)) {
-//        if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)
-//            error_report("Database has not been initialized");
-//        return;
-//    }
-//
-//    if (unlikely(!dimension_uuid))
-//        return;
-//
-//    rc = store_active_uuid_object(&res, SQL_STORE_ACTIVE_DIMENSION, dimension_uuid);
-//    if (rc != SQLITE_DONE)
-//        error_report("Failed to store active dimension, rc = %d", rc);
-//
-//    rc = sqlite3_reset(res);
-//    if (unlikely(rc != SQLITE_OK))
-//        error_report("Failed to finalize statement in store active dimension, rc = %d", rc);
-//    return;
-//}
+    rc = sqlite3_bind_blob(*res, 1, uuid, sizeof(*uuid), SQLITE_STATIC);
+    if (unlikely(rc != SQLITE_OK))
+        error_report("Failed to bind input parameter to store active object, rc = %d", rc);
+    else
+        rc = execute_insert(*res);
+    return rc;
+}
+
+/*
+ * Marks a chart with UUID as active
+ * Input: UUID
+ */
+void store_active_chart(uuid_t *chart_uuid)
+{
+    static __thread sqlite3_stmt *res = NULL;
+    int rc;
+
+    if (unlikely(!db_meta)) {
+        if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)
+            error_report("Database has not been initialized");
+        return;
+    }
+
+    if (unlikely(!chart_uuid))
+        return;
+
+    rc = store_active_uuid_object(&res, SQL_STORE_ACTIVE_CHART, chart_uuid);
+    if (rc != SQLITE_DONE)
+        error_report("Failed to store active chart, rc = %d", rc);
+
+    rc = sqlite3_reset(res);
+    if (unlikely(rc != SQLITE_OK))
+        error_report("Failed to finalize statement in store active chart, rc = %d", rc);
+    return;
+}
+
+/*
+ * Marks a dimension with UUID as active
+ * Input: UUID
+ */
+void store_active_dimension(uuid_t *dimension_uuid)
+{
+    static __thread sqlite3_stmt *res = NULL;
+    int rc;
+
+    if (unlikely(!db_meta)) {
+        if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)
+            error_report("Database has not been initialized");
+        return;
+    }
+
+    if (unlikely(!dimension_uuid))
+        return;
+
+    rc = store_active_uuid_object(&res, SQL_STORE_ACTIVE_DIMENSION, dimension_uuid);
+    if (rc != SQLITE_DONE)
+        error_report("Failed to store active dimension, rc = %d", rc);
+
+    rc = sqlite3_reset(res);
+    if (unlikely(rc != SQLITE_OK))
+        error_report("Failed to finalize statement in store active dimension, rc = %d", rc);
+    return;
+}
 
 static int check_table_integrity_cb(void *data, int argc, char **argv, char **column)
 {
@@ -303,7 +271,6 @@ static void rebuild_chart()
 const char *rebuild_dimension_commands[] = {
     "BEGIN TRANSACTION; ",
     "DROP INDEX IF EXISTS ind_d1;" ,
-    "DROP INDEX IF EXISTS ind_d2;" ,
     "DROP TABLE IF EXISTS dimension_backup; " ,
     "CREATE TABLE dimension_backup AS SELECT * FROM dimension; " ,
     "DROP TABLE dimension; " ,
@@ -311,7 +278,7 @@ const char *rebuild_dimension_commands[] = {
         "multiplier int, divisor int , algorithm int, options text);" ,
     "INSERT INTO dimension SELECT distinct * FROM dimension_backup; " ,
     "DROP TABLE dimension_backup;  " ,
-    "CREATE INDEX IF NOT EXISTS ind_d2 on dimension (chart_id, name);",
+    "CREATE INDEX IF NOT EXISTS ind_d1 on dimension (chart_id, id, name);",
     "COMMIT TRANSACTION;",
     NULL
 };
@@ -456,7 +423,7 @@ int sql_init_database(db_check_action_type_t rebuild, int memory)
     // PRAGMA temp_store = 0 | DEFAULT | 1 | FILE | 2 | MEMORY;
     snprintfz(buf, 1024, "PRAGMA temp_store=%s;", config_get(CONFIG_SECTION_SQLITE, "temp store", "MEMORY"));
     if(init_database_batch(rebuild, 0, list)) return 1;
-
+    
     // https://www.sqlite.org/pragma.html#pragma_journal_size_limit
     // PRAGMA schema.journal_size_limit = N ;
     snprintfz(buf, 1024, "PRAGMA journal_size_limit=%lld;", config_get_number(CONFIG_SECTION_SQLITE, "journal size limit", 16777216));
@@ -476,10 +443,6 @@ int sql_init_database(db_check_action_type_t rebuild, int memory)
 
     fatal_assert(0 == uv_mutex_init(&sqlite_transaction_lock));
     info("SQLite database initialization completed");
-
-    for (int i = 0; i < MAX_PREPARED_STATEMENTS; i++)
-        (void)pthread_key_create(&key_pool[i], release_statement);
-
     return 0;
 }
 
@@ -573,33 +536,15 @@ int find_dimension_uuid(RRDSET *st, RRDDIM *rd, uuid_t *store_uuid)
     }
     else {
         uuid_generate(*store_uuid);
-//        struct metadata_database_cmd cmd;
-//        memset(&cmd, 0, sizeof(cmd));
-//        cmd.opcode = METADATA_ADD_DIMENSION;
-//        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-//        cmd.param[0] = (void *)rd;
-//        //cmd.param[1] = mallocz(sizeof(*store_uuid));
-//        //uuid_copy(*((uuid_t *) cmd.param[1]), *store_uuid);
-//        metadata_database_enq_cmd(&metasync_worker, &cmd);
-        status = 1;
-        //status = sql_store_dimension(store_uuid, st->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor, rd->algorithm);
-        //if (unlikely(status))
-        //    error_report("Failed to store dimension metadata in the database");
+        status = sql_store_dimension(store_uuid, st->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor, rd->algorithm);
+        if (unlikely(status))
+            error_report("Failed to store dimension metadata in the database");
     }
 
     rc = sqlite3_reset(res);
     if (unlikely(rc != SQLITE_OK))
         error_report("Failed to reset statement find dimension uuid, rc = %d", rc);
-
-    if (status == 1) {
-        struct metadata_database_cmd cmd;
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.opcode = METADATA_ADD_DIMENSION;
-        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-        cmd.param[0] = (void *)rd;
-        metadata_database_enq_cmd(&metasync_worker, &cmd);
-    }
-    return 0;
+    return status;
 
 bind_fail:
     error_report("Failed to bind input parameter to perform dimension UUID database lookup, rc = %d", rc);
@@ -681,10 +626,8 @@ uuid_t *find_chart_uuid(RRDHOST *host, const char *type, const char *id, const c
 
     rc = sqlite3_step(res);
     if (likely(rc == SQLITE_ROW)) {
-        if (sqlite3_column_bytes(res, 0) == sizeof(uuid_t)) {
-            uuid = mallocz(sizeof(uuid_t));
-            uuid_copy(*uuid, *((uuid_t *)sqlite3_column_blob(res, 0)));
-        }
+        uuid = mallocz(sizeof(uuid_t));
+        uuid_copy(*uuid, sqlite3_column_blob(res, 0));
     }
 
     rc = sqlite3_reset(res);
@@ -727,7 +670,7 @@ int update_chart_metadata(uuid_t *chart_uuid, RRDSET *st, const char *id, const 
 uuid_t *create_chart_uuid(RRDSET *st, const char *id, const char *name)
 {
     uuid_t *uuid = NULL;
-//    int rc;
+    int rc;
 
     uuid = mallocz(sizeof(uuid_t));
     uuid_generate(*uuid);
@@ -738,20 +681,10 @@ uuid_t *create_chart_uuid(RRDSET *st, const char *id, const char *name)
     debug(D_METADATALOG,"Generating uuid [%s] for chart %s under host %s", uuid_str, st->id, st->rrdhost->hostname);
 #endif
 
-    struct metadata_database_cmd cmd;
+    rc = update_chart_metadata(uuid, st, id, name);
 
-    memset(&cmd, 0, sizeof(cmd));
-    cmd.opcode = METADATA_ADD_CHART;
-    rrd_atomic_fetch_add(&st->state->metadata_update_count, 1);
-    cmd.param[0] = st;
-    cmd.param[1] = (void *) strdupz(id);
-    cmd.param[2] = name ? (void *) strdupz(name) : NULL;
-    metadata_database_enq_cmd(&metasync_worker, &cmd);
-
-    //rc = update_chart_metadata(uuid, st, id, name);
-
-    //if (unlikely(rc))
-    //    error_report("Failed to store chart metadata in the database");
+    if (unlikely(rc))
+        error_report("Failed to store chart metadata in the database");
 
     return uuid;
 }
@@ -1162,7 +1095,9 @@ void sql_rrdset2json(RRDHOST *host, BUFFER *wb)
     while (sqlite3_step(res_chart) == SQLITE_ROW) {
         char id[512];
         sprintf(id, "%s.%s", sqlite3_column_text(res_chart, 3), sqlite3_column_text(res_chart, 1));
-//        RRDSET *st = rrdset_find(host, id);
+        RRDSET *st = rrdset_find(host, id);
+        if (st && !rrdset_flag_check(st, RRDSET_FLAG_ARCHIVED))
+            continue;
 
         if (c)
             buffer_strcat(wb, ",\n\t\t\"");
@@ -1343,9 +1278,9 @@ RRDHOST *sql_create_host_by_uuid(char *hostname)
 
     host->system_info = callocz(1, sizeof(*host->system_info));;
     rrdhost_flag_set(host, RRDHOST_FLAG_ARCHIVED);
-
-    // Create multidb engine instance if necessary
-    host->rrdeng_ctx = storage_engine_new(storage_engine_get(RRD_MEMORY_MODE_DBENGINE), host);
+#ifdef ENABLE_DBENGINE
+    host->rrdeng_ctx = &multidb_ctx;
+#endif
 
 failed:
     rc = sqlite3_finalize(res);
@@ -1830,38 +1765,42 @@ int sql_store_chart_hash(
   if cloud is disabled or openssl is not available (which will prevent cloud connectivity)
   skip hash calculations
 */
-void compute_chart_hash(RRDSET *st, int action)
+void compute_chart_hash(RRDSET *st)
 {
 #if !defined DISABLE_CLOUD && defined ENABLE_HTTPS
     EVP_MD_CTX *evpctx;
     unsigned char hash_value[EVP_MAX_MD_SIZE];
     unsigned int hash_len;
+    char  priority_str[32];
 
-    if (!action) {
+    sprintf(priority_str, "%ld", st->priority);
 
-        evpctx = EVP_MD_CTX_create();
-        EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
-        //EVP_DigestUpdate(evpctx, st->type, strlen(st->type));
-        EVP_DigestUpdate(evpctx, st->id, strlen(st->id));
-        EVP_DigestUpdate(evpctx, st->name, strlen(st->name));
-        EVP_DigestUpdate(evpctx, st->family, strlen(st->family));
-        EVP_DigestUpdate(evpctx, st->context, strlen(st->context));
-        EVP_DigestUpdate(evpctx, st->title, strlen(st->title));
-        EVP_DigestUpdate(evpctx, st->units, strlen(st->units));
-        EVP_DigestUpdate(evpctx, st->plugin_name, strlen(st->plugin_name));
-        if (st->module_name)
-            EVP_DigestUpdate(evpctx, st->module_name, strlen(st->module_name));
-        EVP_DigestUpdate(evpctx, &st->priority, sizeof(st->priority));
-        EVP_DigestUpdate(evpctx, &st->chart_type, sizeof(st->chart_type));
-        EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
-        EVP_MD_CTX_destroy(evpctx);
-        fatal_assert(hash_len > sizeof(uuid_t));
-        uuid_copy(st->state->hash_id, *((uuid_t *)&hash_value));
-        return;
-    }
+    evpctx = EVP_MD_CTX_create();
+    EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
+    //EVP_DigestUpdate(evpctx, st->type, strlen(st->type));
+    EVP_DigestUpdate(evpctx, st->id, strlen(st->id));
+    EVP_DigestUpdate(evpctx, st->name, strlen(st->name));
+    EVP_DigestUpdate(evpctx, st->family, strlen(st->family));
+    EVP_DigestUpdate(evpctx, st->context, strlen(st->context));
+    EVP_DigestUpdate(evpctx, st->title, strlen(st->title));
+    EVP_DigestUpdate(evpctx, st->units, strlen(st->units));
+    EVP_DigestUpdate(evpctx, st->plugin_name, strlen(st->plugin_name));
+    if (st->module_name)
+        EVP_DigestUpdate(evpctx, st->module_name, strlen(st->module_name));
+//    EVP_DigestUpdate(evpctx, priority_str, strlen(priority_str));
+    EVP_DigestUpdate(evpctx, &st->priority, sizeof(st->priority));
+    EVP_DigestUpdate(evpctx, &st->chart_type, sizeof(st->chart_type));
+    EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
+    EVP_MD_CTX_destroy(evpctx);
+    fatal_assert(hash_len > sizeof(uuid_t));
+
+    char uuid_str[GUID_LEN + 1];
+    uuid_unparse_lower(*((uuid_t *) &hash_value), uuid_str);
+    //info("Calculating HASH %s for chart %s", uuid_str, st->name);
+    uuid_copy(st->state->hash_id, *((uuid_t *) &hash_value));
 
     (void)sql_store_chart_hash(
-        (uuid_t *)&st->state->hash_id,
+        (uuid_t *)&hash_value,
         st->chart_uuid,
         st->type,
         st->id,
@@ -2011,6 +1950,12 @@ char *get_hostname_by_node_id(char *node)
     sqlite3_stmt *res = NULL;
     char  *hostname = NULL;
     int rc;
+
+    rrd_rdlock();
+    RRDHOST *host = find_host_by_node_id(node);
+    rrd_unlock();
+    if (host)
+        return strdupz(host->hostname);
 
     if (unlikely(!db_meta)) {
         if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)

@@ -2,16 +2,10 @@
 
 #define NETDATA_RRD_INTERNALS
 #include "rrd.h"
-#include "storage_engine.h"
-#ifdef ENABLE_DBENGINE
-#include "engine/rrdenginelib.h"
-#endif
 
 RRDHOST *localhost = NULL;
 size_t rrd_hosts_available = 0;
 netdata_rwlock_t rrd_rwlock = NETDATA_RWLOCK_INITIALIZER;
-
-struct metadata_database_worker_config metasync_worker;
 
 time_t rrdset_free_obsolete_time = 3600;
 time_t rrdhost_free_orphan_time = 3600;
@@ -339,8 +333,41 @@ RRDHOST *rrdhost_create(const char *hostname,
     else
         error_report("Host machine GUID %s is not valid", host->machine_guid);
 
-    // Create engine
-    host->rrdeng_ctx = storage_engine_new(storage_engine_get(host->rrd_memory_mode), host);
+    if (host->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+#ifdef ENABLE_DBENGINE
+        char dbenginepath[FILENAME_MAX + 1];
+        int ret;
+
+        snprintfz(dbenginepath, FILENAME_MAX, "%s/dbengine", host->cache_dir);
+        ret = mkdir(dbenginepath, 0775);
+        if (ret != 0 && errno != EEXIST)
+            error("Host '%s': cannot create directory '%s'", host->hostname, dbenginepath);
+        else ret = 0; // succeed
+        if (is_legacy) // initialize legacy dbengine instance as needed
+            ret = rrdeng_init(host, &host->rrdeng_ctx, dbenginepath, default_rrdeng_page_cache_mb,
+                              default_rrdeng_disk_quota_mb); // may fail here for legacy dbengine initialization
+        else
+            host->rrdeng_ctx = &multidb_ctx;
+        if (ret) { // check legacy or multihost initialization success
+            error(
+                "Host '%s': cannot initialize host with machine guid '%s'. Failed to initialize DB engine at '%s'.",
+                host->hostname, host->machine_guid, host->cache_dir);
+            rrdhost_free(host);
+            host = NULL;
+            //rrd_hosts_available++; //TODO: maybe we want this?
+
+            return host;
+        }
+
+#else
+        fatal("RRD_MEMORY_MODE_DBENGINE is not supported in this platform.");
+#endif
+    }
+    else {
+#ifdef ENABLE_DBENGINE
+        host->rrdeng_ctx = &multidb_ctx;
+#endif
+    }
 
     // ------------------------------------------------------------------------
     // link it and add it to the index
@@ -643,8 +670,10 @@ restart_after_removal:
             info("Host '%s' with machine guid '%s' is obsolete - cleaning up.", host->hostname, host->machine_guid);
 
             if (rrdhost_flag_check(host, RRDHOST_FLAG_DELETE_ORPHAN_HOST)
+#ifdef ENABLE_DBENGINE
                 /* don't delete multi-host DB host files */
-                && !(host->rrdeng_ctx->engine && host->rrdeng_ctx->engine->context == host->rrdeng_ctx)
+                && !(host->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE && host->rrdeng_ctx == &multidb_ctx)
+#endif
             )
                 rrdhost_delete_charts(host);
             else
@@ -677,7 +706,6 @@ int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
             fatal("Failed to initialize SQLite");
         info("Skipping SQLITE metadata initialization since memory mode is not db engine");
     }
-    metadata_sync_init(&metasync_worker);
 
     health_init();
 
@@ -712,6 +740,25 @@ int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
         return 1;
     }
 
+#ifdef ENABLE_DBENGINE
+    char dbenginepath[FILENAME_MAX + 1];
+    int ret;
+    snprintfz(dbenginepath, FILENAME_MAX, "%s/dbengine", localhost->cache_dir);
+    ret = mkdir(dbenginepath, 0775);
+    if (ret != 0 && errno != EEXIST)
+        error("Host '%s': cannot create directory '%s'", localhost->hostname, dbenginepath);
+    else  // Unconditionally create multihost db to support on demand host creation
+        ret = rrdeng_init(NULL, NULL, dbenginepath, default_rrdeng_page_cache_mb, default_multidb_disk_quota_mb);
+    if (ret) {
+        error(
+            "Host '%s' with machine guid '%s' failed to initialize multi-host DB engine instance at '%s'.",
+            localhost->hostname, localhost->machine_guid, localhost->cache_dir);
+        rrdhost_free(localhost);
+        localhost = NULL;
+        rrd_unlock();
+        fatal("Failed to initialize dbengine");
+    }
+#endif
     sql_aclk_sync_init();
     rrd_unlock();
 
@@ -856,12 +903,12 @@ void rrdhost_free(RRDHOST *host) {
     // ------------------------------------------------------------------------
     // release its children resources
 
-    STORAGE_ENGINE* eng = host->rrdeng_ctx->engine;
-    if (host->rrdeng_ctx != eng->context) {
-        if (eng && eng->api.engine_ops.exit)
-            eng->api.engine_ops.exit(host->rrdeng_ctx);
+#ifdef ENABLE_DBENGINE
+    if (host->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+        if (host->rrdeng_ctx != &multidb_ctx)
+            rrdeng_prepare_exit(host->rrdeng_ctx);
     }
-
+#endif
     while(host->rrdset_root)
         rrdset_free(host->rrdset_root);
 
@@ -892,11 +939,10 @@ void rrdhost_free(RRDHOST *host) {
 
     health_alarm_log_free(host);
 
-    if (host->rrdeng_ctx != eng->context) {
-        if (eng)
-            eng->api.engine_ops.destroy(host->rrdeng_ctx);
-        host->rrdeng_ctx = NULL;
-    }
+#ifdef ENABLE_DBENGINE
+    if (host->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE && host->rrdeng_ctx != &multidb_ctx)
+        rrdeng_exit(host->rrdeng_ctx);
+#endif
 
     // ------------------------------------------------------------------------
     // remove it from the indexes
@@ -1212,8 +1258,10 @@ void rrdhost_cleanup_all(void) {
     RRDHOST *host;
     rrdhost_foreach_read(host) {
         if (host != localhost && rrdhost_flag_check(host, RRDHOST_FLAG_DELETE_ORPHAN_HOST) && !host->receiver
+#ifdef ENABLE_DBENGINE
             /* don't delete multi-host DB host files */
-            && !(host->rrdeng_ctx->engine && host->rrdeng_ctx->engine->context == host->rrdeng_ctx)
+            && !(host->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE && host->rrdeng_ctx == &multidb_ctx)
+#endif
         )
             rrdhost_delete_charts(host);
         else
@@ -1240,21 +1288,77 @@ restart_after_removal:
                     && st->last_accessed_time + rrdset_free_obsolete_time < now
                     && st->last_updated.tv_sec + rrdset_free_obsolete_time < now
                     && st->last_collected_time.tv_sec + rrdset_free_obsolete_time < now
-                    && !st->state->metadata_update_count
         )) {
             st->rrdhost->obsolete_charts_count--;
-
 #ifdef ENABLE_DBENGINE
-            if (unlikely(st->rrd_memory_mode != RRD_MEMORY_MODE_DBENGINE))
+            if(st->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+                RRDDIM *rd, *last;
+
+                rrdset_flag_set(st, RRDSET_FLAG_ARCHIVED);
+                while (st->variables)  rrdsetvar_free(st->variables);
+                while (st->alarms)     rrdsetcalc_unlink(st->alarms);
+                rrdset_wrlock(st);
+                for (rd = st->dimensions, last = NULL ; likely(rd) ; ) {
+                    if (rrddim_flag_check(rd, RRDDIM_FLAG_ARCHIVED)) {
+                        last = rd;
+                        rd = rd->next;
+                        continue;
+                    }
+
+                    if (rrddim_flag_check(rd, RRDDIM_FLAG_ACLK)) {
+                        last = rd;
+                        rd = rd->next;
+                        continue;
+                    }
+                    rrddim_flag_set(rd, RRDDIM_FLAG_ARCHIVED);
+                    while (rd->variables)
+                        rrddimvar_free(rd->variables);
+
+                    if (rrddim_flag_check(rd, RRDDIM_FLAG_OBSOLETE)) {
+                        rrddim_flag_clear(rd, RRDDIM_FLAG_OBSOLETE);
+                        /* only a collector can mark a chart as obsolete, so we must remove the reference */
+                        uint8_t can_delete_metric = rd->state->collect_ops.finalize(rd);
+                        if (can_delete_metric) {
+                            /* This metric has no data and no references */
+                            delete_dimension_uuid(&rd->state->metric_uuid);
+                            rrddim_free(st, rd);
+                            if (unlikely(!last)) {
+                                rd = st->dimensions;
+                            }
+                            else {
+                                rd = last->next;
+                            }
+                            continue;
+                        }
+#if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
+                        else
+                            queue_dimension_to_aclk(rd, rd->last_collected_time.tv_sec);
 #endif
-            {
-                rrdset_rdlock(st);
-                if (rrdhost_delete_obsolete_charts)
-                    rrdset_delete(st);
-                else
-                    rrdset_save(st);
+                    }
+                    last = rd;
+                    rd = rd->next;
+                }
                 rrdset_unlock(st);
+
+                debug(D_RRD_CALLS, "RRDSET: Cleaning up remaining chart variables for host '%s', chart '%s'", host->hostname, st->id);
+                rrdvar_free_remaining_variables(host, &st->rrdvar_root_index);
+
+                rrdset_flag_clear(st, RRDSET_FLAG_OBSOLETE);
+                
+                if (st->dimensions) {
+                    /* If the chart still has dimensions don't delete it from the metadata log */
+                    continue;
+                }
             }
+#endif
+            rrdset_rdlock(st);
+
+            if(rrdhost_delete_obsolete_charts)
+                rrdset_delete(st);
+            else
+                rrdset_save(st);
+
+            rrdset_unlock(st);
 
             rrdset_free(st);
             goto restart_after_removal;
