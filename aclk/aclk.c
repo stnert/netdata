@@ -187,7 +187,7 @@ void aclk_mqtt_wss_log_cb(mqtt_wss_log_type_t log_type, const char* str)
 }
 
 //TODO prevent big buffer on stack
-#define RX_MSGLEN_MAX 4096
+#define RX_MSGLEN_MAX 8192
 static void msg_callback_old_protocol(const char *topic, const void *msg, size_t msglen, int qos)
 {
     UNUSED(qos);

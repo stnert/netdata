@@ -170,8 +170,17 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         rc += rrddim_set_divisor(st, rd, divisor);
         if (unlikely(rc)) {
             debug(D_METADATALOG, "DIMENSION [%s] metadata updated", rd->id);
-            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
-                                      rd->algorithm);
+
+//            struct metadata_database_cmd cmd;
+//            memset(&cmd, 0, sizeof(cmd));
+//            cmd.opcode = METADATA_ADD_DIMENSION;
+//            cmd.param[0] = (void *)rd;
+//            cmd.param[1] = mallocz(sizeof(uuid_t));
+//            uuid_copy(*((uuid_t *) cmd.param[1]), rd->state->metric_uuid);
+//            metadata_database_enq_cmd(&metasync_worker, &cmd);
+
+//            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
+//                                      rd->algorithm);
 #if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
             queue_dimension_to_aclk(rd, calc_dimension_liveness(rd, now_realtime_sec()));
 #endif
@@ -331,7 +340,13 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         rrdeng_metric_init(rd);
     }
 #endif
-    store_active_dimension(&rd->state->metric_uuid);
+//    struct metadata_database_cmd cmd;
+//    memset(&cmd, 0, sizeof(cmd));
+//    cmd.opcode = METADATA_ADD_DIMENSION_ACTIVE;
+//    rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+//    cmd.param[0] = (void *)rd;
+//    metadata_database_enq_cmd(&metasync_worker, &cmd);
+    //store_active_dimension(&rd->state->metric_uuid);
     rd->state->collect_ops.init(rd);
     // append this dimension
     if(!st->dimensions)

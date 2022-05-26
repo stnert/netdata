@@ -97,12 +97,14 @@ void charts2json(RRDHOST *host, BUFFER *wb, int skip_volatile, int show_archived
                      ",\n\t\"dimensions_count\": %zu"
                      ",\n\t\"alarms_count\": %zu"
                      ",\n\t\"rrd_memory_bytes\": %zu"
+                     ",\n\t\"total_points\": %zu"
                      ",\n\t\"hosts_count\": %zu"
                      ",\n\t\"hosts\": ["
                    , c
                    , dimensions
                    , alarms
                    , memory
+                   , host->rrdeng_ctx->pg_cache.number_of_metrics
                    , rrd_hosts_available
     );
 

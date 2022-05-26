@@ -113,9 +113,18 @@ void rrdeng_metric_init(RRDDIM *rd)
 
         uuid_copy(rd->state->metric_uuid, multihost_legacy_uuid);
 
-        if (unlikely(need_to_store))
-            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
-                rd->algorithm);
+        if (unlikely(need_to_store)) {
+            struct metadata_database_cmd cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.opcode = METADATA_ADD_DIMENSION;
+            rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+            cmd.param[0] = (void *)rd;
+//            cmd.param[1] = mallocz(sizeof(uuid_t));
+//            uuid_copy(*((uuid_t *) cmd.param[1]), rd->state->metric_uuid);
+            metadata_database_enq_cmd(&metasync_worker, &cmd);
+            //(void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
+            //    rd->algorithm);
+        }
 
     }
     rd->state->rrdeng_uuid = &page_index->id;

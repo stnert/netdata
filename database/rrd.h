@@ -20,6 +20,7 @@ typedef struct alarm_entry ALARM_ENTRY;
 typedef struct context_param CONTEXT_PARAM;
 typedef struct storage_engine_instance STORAGE_ENGINE_INSTANCE;
 typedef struct storage_engine STORAGE_ENGINE;
+typedef struct metadata_database_worker_config METADATA_WC;
 
 typedef void *ml_host_t;
 typedef void *ml_dimension_t;
@@ -73,6 +74,7 @@ extern int default_rrd_update_every;
 extern int default_rrd_history_entries;
 extern int gap_when_lost_iterations_above;
 extern time_t rrdset_free_obsolete_time;
+extern struct metadata_database_worker_config metasync_worker;
 
 #define RRD_ID_LENGTH_MAX 200
 
@@ -364,6 +366,7 @@ struct rrddim_query_ops {
 // ----------------------------------------------------------------------------
 // volatile state per RRD dimension
 struct rrddim_volatile {
+    unsigned metadata_update_count;
 #ifdef ENABLE_DBENGINE
     uuid_t *rrdeng_uuid;                 // database engine metric UUID
     struct pg_cache_page_index *page_index;
@@ -381,6 +384,7 @@ struct rrddim_volatile {
 // ----------------------------------------------------------------------------
 // volatile state per chart
 struct rrdset_volatile {
+    unsigned metadata_update_count;
     char *old_title;
     char *old_units;
     char *old_context;
@@ -1316,6 +1320,7 @@ extern void set_host_properties(
 // RRD DB engine declarations
 
 #include "sqlite/sqlite_functions.h"
+#include "sqlite/sqlite_metadata.h"
 #include "sqlite/sqlite_aclk.h"
 #include "sqlite/sqlite_aclk_chart.h"
 #include "sqlite/sqlite_aclk_alert.h"

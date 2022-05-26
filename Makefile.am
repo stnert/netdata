@@ -455,7 +455,9 @@ RRD_PLUGIN_FILES = \
     database/sqlite/sqlite_functions.c \
     database/sqlite/sqlite_functions.h \
     database/sqlite/sqlite_aclk.c \
-    database/sqlite/sqlite_aclk.h \
+	database/sqlite/sqlite_aclk.h \
+    database/sqlite/sqlite_metadata.c \
+    database/sqlite/sqlite_metadata.h \
     database/sqlite/sqlite_health.c \
     database/sqlite/sqlite_health.h \
     database/sqlite/sqlite_aclk_node.c \

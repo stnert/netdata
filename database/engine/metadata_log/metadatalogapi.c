@@ -33,7 +33,21 @@ void metalog_delete_dimension_by_uuid(struct metalog_instance *ctx, uuid_t *metr
 {
     uuid_t  multihost_uuid;
 
-    delete_dimension_uuid(metric_uuid);
+    struct metadata_database_cmd cmd;
+    memset(&cmd, 0, sizeof(cmd));
+
     rrdeng_convert_legacy_uuid_to_multihost(ctx->rrdeng_ctx->machine_guid, metric_uuid, &multihost_uuid);
-    delete_dimension_uuid(&multihost_uuid);
+
+    cmd.opcode = METADATA_DEL_DIMENSION;
+    cmd.param[0] = mallocz(sizeof(uuid_t));
+    uuid_copy(*((uuid_t *) cmd.param[0]), *metric_uuid);
+    metadata_database_enq_cmd(&metasync_worker, &cmd);
+
+    cmd.opcode = METADATA_DEL_DIMENSION;
+    cmd.param[0] = mallocz(sizeof(uuid_t));
+    uuid_copy(*((uuid_t *) cmd.param[0]), multihost_uuid);
+    metadata_database_enq_cmd(&metasync_worker, &cmd);
+
+    //delete_dimension_uuid(metric_uuid);
+    //delete_dimension_uuid(&multihost_uuid);
 }

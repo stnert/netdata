@@ -11,6 +11,8 @@ RRDHOST *localhost = NULL;
 size_t rrd_hosts_available = 0;
 netdata_rwlock_t rrd_rwlock = NETDATA_RWLOCK_INITIALIZER;
 
+struct metadata_database_worker_config metasync_worker;
+
 time_t rrdset_free_obsolete_time = 3600;
 time_t rrdhost_free_orphan_time = 3600;
 
@@ -675,6 +677,7 @@ int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
             fatal("Failed to initialize SQLite");
         info("Skipping SQLITE metadata initialization since memory mode is not db engine");
     }
+    metadata_sync_init(&metasync_worker);
 
     health_init();
 
@@ -1237,6 +1240,7 @@ restart_after_removal:
                     && st->last_accessed_time + rrdset_free_obsolete_time < now
                     && st->last_updated.tv_sec + rrdset_free_obsolete_time < now
                     && st->last_collected_time.tv_sec + rrdset_free_obsolete_time < now
+                    && !st->state->metadata_update_count
         )) {
             st->rrdhost->obsolete_charts_count--;
 

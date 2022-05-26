@@ -56,6 +56,7 @@ const char *database_config[] = {
     "INSERT INTO chart_hash_map (chart_id, hash_id) values (new.chart_id, new.hash_id) "
     "on conflict (chart_id, hash_id) do nothing; END; ",
 
+    "PRAGMA threads=4;",
     "PRAGMA user_version="DB_METADATA_VERSION";",
     NULL
 };
@@ -540,9 +541,18 @@ int find_dimension_uuid(RRDSET *st, RRDDIM *rd, uuid_t *store_uuid)
     }
     else {
         uuid_generate(*store_uuid);
-        status = sql_store_dimension(store_uuid, st->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor, rd->algorithm);
-        if (unlikely(status))
-            error_report("Failed to store dimension metadata in the database");
+        struct metadata_database_cmd cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.opcode = METADATA_ADD_DIMENSION;
+        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+        cmd.param[0] = (void *)rd;
+        //cmd.param[1] = mallocz(sizeof(*store_uuid));
+        //uuid_copy(*((uuid_t *) cmd.param[1]), *store_uuid);
+        metadata_database_enq_cmd(&metasync_worker, &cmd);
+        status = 0;
+        //status = sql_store_dimension(store_uuid, st->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor, rd->algorithm);
+        //if (unlikely(status))
+        //    error_report("Failed to store dimension metadata in the database");
     }
 
     rc = sqlite3_reset(res);
@@ -630,8 +640,10 @@ uuid_t *find_chart_uuid(RRDHOST *host, const char *type, const char *id, const c
 
     rc = sqlite3_step(res);
     if (likely(rc == SQLITE_ROW)) {
-        uuid = mallocz(sizeof(uuid_t));
-        uuid_copy(*uuid, sqlite3_column_blob(res, 0));
+        if (sqlite3_column_bytes(res, 0) == sizeof(uuid_t)) {
+            uuid = mallocz(sizeof(uuid_t));
+            uuid_copy(*uuid, *((uuid_t *)sqlite3_column_blob(res, 0)));
+        }
     }
 
     rc = sqlite3_reset(res);
@@ -674,7 +686,7 @@ int update_chart_metadata(uuid_t *chart_uuid, RRDSET *st, const char *id, const 
 uuid_t *create_chart_uuid(RRDSET *st, const char *id, const char *name)
 {
     uuid_t *uuid = NULL;
-    int rc;
+//    int rc;
 
     uuid = mallocz(sizeof(uuid_t));
     uuid_generate(*uuid);
@@ -685,10 +697,20 @@ uuid_t *create_chart_uuid(RRDSET *st, const char *id, const char *name)
     debug(D_METADATALOG,"Generating uuid [%s] for chart %s under host %s", uuid_str, st->id, st->rrdhost->hostname);
 #endif
 
-    rc = update_chart_metadata(uuid, st, id, name);
+    struct metadata_database_cmd cmd;
 
-    if (unlikely(rc))
-        error_report("Failed to store chart metadata in the database");
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.opcode = METADATA_ADD_CHART;
+    rrd_atomic_fetch_add(&st->state->metadata_update_count, 1);
+    cmd.param[0] = st;
+    cmd.param[1] = (void *) strdupz(id);
+    cmd.param[2] = name ? (void *) strdupz(name) : NULL;
+    metadata_database_enq_cmd(&metasync_worker, &cmd);
+
+    //rc = update_chart_metadata(uuid, st, id, name);
+
+    //if (unlikely(rc))
+    //    error_report("Failed to store chart metadata in the database");
 
     return uuid;
 }
@@ -1099,7 +1121,7 @@ void sql_rrdset2json(RRDHOST *host, BUFFER *wb)
     while (sqlite3_step(res_chart) == SQLITE_ROW) {
         char id[512];
         sprintf(id, "%s.%s", sqlite3_column_text(res_chart, 3), sqlite3_column_text(res_chart, 1));
-        RRDSET *st = rrdset_find(host, id);
+//        RRDSET *st = rrdset_find(host, id);
 
         if (c)
             buffer_strcat(wb, ",\n\t\t\"");
@@ -1767,7 +1789,7 @@ int sql_store_chart_hash(
   if cloud is disabled or openssl is not available (which will prevent cloud connectivity)
   skip hash calculations
 */
-void compute_chart_hash(RRDSET *st)
+void compute_chart_hash(RRDSET *st, int action)
 {
 #if !defined DISABLE_CLOUD && defined ENABLE_HTTPS
     EVP_MD_CTX *evpctx;
@@ -1775,34 +1797,37 @@ void compute_chart_hash(RRDSET *st)
     unsigned int hash_len;
     char  priority_str[32];
 
-    sprintf(priority_str, "%ld", st->priority);
+    if (!action) {
+        sprintf(priority_str, "%ld", st->priority);
 
-    evpctx = EVP_MD_CTX_create();
-    EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
-    //EVP_DigestUpdate(evpctx, st->type, strlen(st->type));
-    EVP_DigestUpdate(evpctx, st->id, strlen(st->id));
-    EVP_DigestUpdate(evpctx, st->name, strlen(st->name));
-    EVP_DigestUpdate(evpctx, st->family, strlen(st->family));
-    EVP_DigestUpdate(evpctx, st->context, strlen(st->context));
-    EVP_DigestUpdate(evpctx, st->title, strlen(st->title));
-    EVP_DigestUpdate(evpctx, st->units, strlen(st->units));
-    EVP_DigestUpdate(evpctx, st->plugin_name, strlen(st->plugin_name));
-    if (st->module_name)
-        EVP_DigestUpdate(evpctx, st->module_name, strlen(st->module_name));
-//    EVP_DigestUpdate(evpctx, priority_str, strlen(priority_str));
-    EVP_DigestUpdate(evpctx, &st->priority, sizeof(st->priority));
-    EVP_DigestUpdate(evpctx, &st->chart_type, sizeof(st->chart_type));
-    EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
-    EVP_MD_CTX_destroy(evpctx);
-    fatal_assert(hash_len > sizeof(uuid_t));
+        evpctx = EVP_MD_CTX_create();
+        EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
+        //EVP_DigestUpdate(evpctx, st->type, strlen(st->type));
+        EVP_DigestUpdate(evpctx, st->id, strlen(st->id));
+        EVP_DigestUpdate(evpctx, st->name, strlen(st->name));
+        EVP_DigestUpdate(evpctx, st->family, strlen(st->family));
+        EVP_DigestUpdate(evpctx, st->context, strlen(st->context));
+        EVP_DigestUpdate(evpctx, st->title, strlen(st->title));
+        EVP_DigestUpdate(evpctx, st->units, strlen(st->units));
+        EVP_DigestUpdate(evpctx, st->plugin_name, strlen(st->plugin_name));
+        if (st->module_name)
+            EVP_DigestUpdate(evpctx, st->module_name, strlen(st->module_name));
+        //    EVP_DigestUpdate(evpctx, priority_str, strlen(priority_str));
+        EVP_DigestUpdate(evpctx, &st->priority, sizeof(st->priority));
+        EVP_DigestUpdate(evpctx, &st->chart_type, sizeof(st->chart_type));
+        EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
+        EVP_MD_CTX_destroy(evpctx);
+        fatal_assert(hash_len > sizeof(uuid_t));
 
-    char uuid_str[GUID_LEN + 1];
-    uuid_unparse_lower(*((uuid_t *) &hash_value), uuid_str);
-    //info("Calculating HASH %s for chart %s", uuid_str, st->name);
-    uuid_copy(st->state->hash_id, *((uuid_t *) &hash_value));
+//        char uuid_str[GUID_LEN + 1];
+ //       uuid_unparse_lower(*((uuid_t *)&hash_value), uuid_str);
+        //info("Calculating HASH %s for chart %s", uuid_str, st->name);
+        uuid_copy(st->state->hash_id, *((uuid_t *)&hash_value));
+        return;
+    }
 
     (void)sql_store_chart_hash(
-        (uuid_t *)&hash_value,
+        (uuid_t *)&st->state->hash_id,
         st->chart_uuid,
         st->type,
         st->id,

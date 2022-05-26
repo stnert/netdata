@@ -656,6 +656,8 @@ set(RRD_PLUGIN_FILES
         database/storage_engine.h
         database/ram/rrddim_mem.c
         database/ram/rrddim_mem.h
+        database/sqlite/sqlite_metadata.c
+        database/sqlite/sqlite_metadata.h
         database/sqlite/sqlite_functions.c
         database/sqlite/sqlite_functions.h
         database/sqlite/sqlite_aclk.c
