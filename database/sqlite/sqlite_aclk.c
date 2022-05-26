@@ -861,7 +861,8 @@ void sql_delete_aclk_table_list(struct aclk_database_worker_config *wc, struct a
     BUFFER *sql = buffer_create(ACLK_SYNC_QUERY_SIZE);
 
     buffer_sprintf(sql,"SELECT 'drop '||type||' IF EXISTS '||name||';' FROM sqlite_schema " \
-        "WHERE name LIKE 'aclk_%%_%s' AND type IN ('table', 'trigger', 'index');", uuid_str);
+        "WHERE (name LIKE 'aclk_%%_%s' OR name LIKE 'health_%%%s') " \
+        "AND type IN ('table', 'trigger', 'index');", uuid_str, uuid_str);
 
     rc = sqlite3_prepare_v2(db_meta, buffer_tostring(sql), -1, &res, 0);
     if (rc != SQLITE_OK) {
@@ -900,7 +901,9 @@ static int sql_check_aclk_table(void *data, int argc, char **argv, char **column
 }
 
 #define SQL_SELECT_ACLK_ACTIVE_LIST "SELECT REPLACE(SUBSTR(name,19),'_','-') FROM sqlite_schema " \
-        "WHERE name LIKE 'aclk_chart_latest_%' AND type IN ('table');"
+        "WHERE name LIKE 'aclk_chart_latest_%' AND type IN ('table') UNION " \
+        "SELECT REPLACE(SUBSTR(name,12),'_','-') FROM sqlite_schema " \
+        "WHERE name LIKE 'health_log_%' AND type IN ('table');"
 
 void sql_check_aclk_table_list(struct aclk_database_worker_config *wc)
 {
