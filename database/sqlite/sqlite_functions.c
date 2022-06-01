@@ -541,15 +541,15 @@ int find_dimension_uuid(RRDSET *st, RRDDIM *rd, uuid_t *store_uuid)
     }
     else {
         uuid_generate(*store_uuid);
-        struct metadata_database_cmd cmd;
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.opcode = METADATA_ADD_DIMENSION;
-        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-        cmd.param[0] = (void *)rd;
-        //cmd.param[1] = mallocz(sizeof(*store_uuid));
-        //uuid_copy(*((uuid_t *) cmd.param[1]), *store_uuid);
-        metadata_database_enq_cmd(&metasync_worker, &cmd);
-        status = 0;
+//        struct metadata_database_cmd cmd;
+//        memset(&cmd, 0, sizeof(cmd));
+//        cmd.opcode = METADATA_ADD_DIMENSION;
+//        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+//        cmd.param[0] = (void *)rd;
+//        //cmd.param[1] = mallocz(sizeof(*store_uuid));
+//        //uuid_copy(*((uuid_t *) cmd.param[1]), *store_uuid);
+//        metadata_database_enq_cmd(&metasync_worker, &cmd);
+        status = 1;
         //status = sql_store_dimension(store_uuid, st->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor, rd->algorithm);
         //if (unlikely(status))
         //    error_report("Failed to store dimension metadata in the database");
@@ -558,7 +558,16 @@ int find_dimension_uuid(RRDSET *st, RRDDIM *rd, uuid_t *store_uuid)
     rc = sqlite3_reset(res);
     if (unlikely(rc != SQLITE_OK))
         error_report("Failed to reset statement find dimension uuid, rc = %d", rc);
-    return status;
+
+    if (status == 1) {
+        struct metadata_database_cmd cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.opcode = METADATA_ADD_DIMENSION;
+        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+        cmd.param[0] = (void *)rd;
+        metadata_database_enq_cmd(&metasync_worker, &cmd);
+    }
+    return 0;
 
 bind_fail:
     error_report("Failed to bind input parameter to perform dimension UUID database lookup, rc = %d", rc);

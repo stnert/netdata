@@ -85,6 +85,7 @@ struct metadata_database_worker_config {
     time_t startup_time;           // When the sync thread started
     int wakeup_now;
     unsigned max_batch;
+    unsigned max_commands_in_queue;
     volatile unsigned queue_size;
     int is_shutting_down;
     uv_loop_t *loop;

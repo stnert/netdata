@@ -71,10 +71,12 @@ void metadata_database_enq_cmd(struct metadata_database_worker_config *wc, struc
     wc->cmd_queue.tail = wc->cmd_queue.tail != METADATA_DATABASE_CMD_Q_MAX_SIZE - 1 ?
                              wc->cmd_queue.tail + 1 : 0;
     wc->queue_size = queue_size + 1;
+    if (wc->queue_size > wc->max_commands_in_queue)
+        wc->max_commands_in_queue = wc->queue_size;
     uv_mutex_unlock(&wc->cmd_mutex);
 
     /* wake up event loop */
-    (void) uv_async_send(&wc->async);
+    //(void) uv_async_send(&wc->async);
 }
 
 struct metadata_database_cmd metadata_database_deq_cmd(struct metadata_database_worker_config* wc)
@@ -209,7 +211,7 @@ void metadata_database_worker(void *arg)
 
     memset(&cmd, 0, sizeof(cmd));
     wc->startup_time = now_realtime_sec();
-    wc->max_batch = 256;
+    wc->max_batch = 128;
 
     unsigned int max_commands_in_queue = 0;
     while (likely(!netdata_exit)) {
@@ -223,7 +225,7 @@ void metadata_database_worker(void *arg)
 
         /* wait for commands */
         cmd_batch_size = 0;
-        //db_execute("BEGIN TRANSACTION;");
+        db_execute("BEGIN TRANSACTION;");
         do {
             if (unlikely(cmd_batch_size >= wc->max_batch))
                 break;
@@ -235,8 +237,8 @@ void metadata_database_worker(void *arg)
             opcode = cmd.opcode;
             ++cmd_batch_size;
 
-            if (wc->queue_size > max_commands_in_queue) {
-                max_commands_in_queue = wc->queue_size;
+            if (wc->max_commands_in_queue > max_commands_in_queue) {
+                max_commands_in_queue = wc->max_commands_in_queue;
                 info("Maximum commands in metadata queue = %u", max_commands_in_queue);
             }
 
@@ -338,7 +340,7 @@ void metadata_database_worker(void *arg)
             if (cmd.completion)
                 metadata_complete(cmd.completion);
         } while (opcode != METADATA_DATABASE_NOOP);
-        //db_execute("COMMIT TRANSACTION;");
+        db_execute("COMMIT TRANSACTION;");
     }
 
     if (!uv_timer_stop(&timer_req))
