@@ -225,7 +225,7 @@ void metadata_database_worker(void *arg)
 
         /* wait for commands */
         cmd_batch_size = 0;
-        db_execute("BEGIN TRANSACTION;");
+        //db_execute("BEGIN TRANSACTION;");
         do {
             if (unlikely(cmd_batch_size >= wc->max_batch))
                 break;
@@ -308,6 +308,11 @@ void metadata_database_worker(void *arg)
                 case METADATA_ADD_DIMENSION:
                     rd = (RRDDIM *) cmd.param[0];
                     //uuid = (uuid_t *) cmd.param[1];
+                    if (rrddim_flag_check(rd, RRDDIM_FLAG_DELETED)) {
+                        info("DELETING dimension during metadata processing --> %p", rd);
+                        freez(rd);
+                        break;
+                    }
                     rc = sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor, rd->algorithm);
                     if (unlikely(rc))
                         error_report("Failed to store dimension %s", rd->id);
@@ -340,7 +345,7 @@ void metadata_database_worker(void *arg)
             if (cmd.completion)
                 metadata_complete(cmd.completion);
         } while (opcode != METADATA_DATABASE_NOOP);
-        db_execute("COMMIT TRANSACTION;");
+        //db_execute("COMMIT TRANSACTION;");
     }
 
     if (!uv_timer_stop(&timer_req))

@@ -33,11 +33,11 @@ static time_t payload_sent(char *uuid_str, uuid_t *uuid, void *payload, size_t p
 
     if (unlikely(!res)) {
         char sql[ACLK_SYNC_QUERY_SIZE];
-//        snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "SELECT acl.date_submitted FROM aclk_chart_latest_%s acl, aclk_chart_payload_%s acp "
-//            "WHERE acl.unique_id = acp.unique_id AND acl.uuid = @uuid AND acp.payload = @payload;",
-//                  uuid_str, uuid_str);
-        snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "SELECT acl.date_submitted FROM aclk_chart_latest_%s acl "
-            "WHERE acl.unique_id = @unique_id", uuid_str);
+        snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "SELECT acl.date_submitted FROM aclk_chart_latest_%s acl, aclk_chart_payload_%s acp "
+            "WHERE acl.unique_id = acp.unique_id AND acl.uuid = @uuid AND acp.payload = @payload;",
+                  uuid_str, uuid_str);
+//        snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "SELECT acl.date_submitted FROM aclk_chart_latest_%s acl "
+//            "WHERE acl.unique_id = @unique_id", uuid_str);
         rc = prepare_statement(db_meta, sql, &res);
         if (rc != SQLITE_OK) {
             error_report("Failed to prepare statement to check payload data on %s", sql);
@@ -45,17 +45,17 @@ static time_t payload_sent(char *uuid_str, uuid_t *uuid, void *payload, size_t p
         }
     }
 
-    rc = sqlite3_bind_blob(res, 1, unique_id, sizeof(*unique_id), SQLITE_STATIC);
+//    rc = sqlite3_bind_blob(res, 1, unique_id, sizeof(*unique_id), SQLITE_STATIC);
+//    if (unlikely(rc != SQLITE_OK))
+//        goto bind_fail;
+
+    rc = sqlite3_bind_blob(res, 1, uuid, sizeof(*uuid), SQLITE_STATIC);
     if (unlikely(rc != SQLITE_OK))
         goto bind_fail;
 
-//    rc = sqlite3_bind_blob(res, 1, uuid, sizeof(*uuid), SQLITE_STATIC);
-//    if (unlikely(rc != SQLITE_OK))
-//        goto bind_fail;
-//
-//    rc = sqlite3_bind_blob(res, 2, payload, payload_size, SQLITE_STATIC);
-//    if (unlikely(rc != SQLITE_OK))
-//        goto bind_fail;
+    rc = sqlite3_bind_blob(res, 2, payload, payload_size, SQLITE_STATIC);
+    if (unlikely(rc != SQLITE_OK))
+        goto bind_fail;
 
     while (sqlite3_step(res) == SQLITE_ROW) {
         send_status = (time_t) sqlite3_column_int64(res, 0);
@@ -85,27 +85,37 @@ static int aclk_add_chart_payload(
         return 0;
 
     uuid_t unique_uuid;
-    //uuid_generate(unique_uuid);
+    uuid_generate(unique_uuid);
 
-    EVP_MD_CTX *evpctx;
-    unsigned char hash_value[EVP_MAX_MD_SIZE];
-    unsigned int hash_len;
+//    EVP_MD_CTX *evpctx;
+//    unsigned char hash_value[EVP_MAX_MD_SIZE];
+//    unsigned int hash_len;
+//
+//    evpctx = EVP_MD_CTX_create();
+//    EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
+//    EVP_DigestUpdate(evpctx, payload, payload_size);
+//    EVP_DigestUpdate(evpctx, uuid, sizeof(*uuid));
+//    EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
+//    EVP_MD_CTX_destroy(evpctx);
+//    fatal_assert(hash_len > sizeof(uuid_t));
+//    uuid_copy(unique_uuid, *((uuid_t *)&hash_value));
 
-    evpctx = EVP_MD_CTX_create();
-    EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
-    EVP_DigestUpdate(evpctx, payload, payload_size);
-    EVP_DigestUpdate(evpctx, uuid, sizeof(*uuid));
-    EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
-    EVP_MD_CTX_destroy(evpctx);
-    fatal_assert(hash_len > sizeof(uuid_t));
-    uuid_copy(unique_uuid, *((uuid_t *)&hash_value));
+//    char uuid_str1[GUID_LEN + 1];
+//    char uuid_str2[GUID_LEN + 1];
+//    uuid_unparse_lower(unique_uuid, uuid_str1);
+//    uuid_unparse_lower(*uuid, uuid_str2);
+
+//    info("DEBUG: Generated unique %s for uuid=%s", uuid_str1, uuid_str2);
 
     if (check_sent) {
         date_submitted = payload_sent(wc->uuid_str, uuid, payload, payload_size, &unique_uuid);
         if (send_status)
             *send_status = date_submitted;
-        if (date_submitted)
+        if (date_submitted) {
+//            info("DEBUG: unique %s for uuid=%s -- already sent", uuid_str1, uuid_str2);
             return 0;
+        }
+//        info("DEBUG: unique %s for uuid=%s -- adding new entry", uuid_str1, uuid_str2);
     }
 
     if (unlikely(!res_chart)) {

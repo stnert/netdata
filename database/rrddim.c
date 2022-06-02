@@ -171,12 +171,12 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         if (unlikely(rc)) {
             debug(D_METADATALOG, "DIMENSION [%s] metadata updated", rd->id);
 
-            struct metadata_database_cmd cmd;
-            memset(&cmd, 0, sizeof(cmd));
-            cmd.opcode = METADATA_ADD_DIMENSION;
-            rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-            cmd.param[0] = (void *)rd;
-            metadata_database_enq_cmd(&metasync_worker, &cmd);
+//            struct metadata_database_cmd cmd;
+//            memset(&cmd, 0, sizeof(cmd));
+//            cmd.opcode = METADATA_ADD_DIMENSION;
+//            rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+//            cmd.param[0] = (void *)rd;
+//            metadata_database_enq_cmd(&metasync_worker, &cmd);
 //            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
 //                                      rd->algorithm);
 #if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
@@ -396,6 +396,12 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
 
 void rrddim_free(RRDSET *st, RRDDIM *rd)
 {
+    int deleting = 0;
+    if (rrd_atomic_fetch_add(&rd->state->metadata_update_count, 0)) {
+        info("DELETING dimension which is pending! --> %s (%p)", rd->id, rd);
+        rrddim_flag_set(rd, RRDDIM_FLAG_DELETED);
+        deleting = 1;
+    }
     ml_delete_dimension(rd);
     
     debug(D_RRD_CALLS, "rrddim_free() %s.%s", st->name, rd->name);
@@ -445,7 +451,9 @@ void rrddim_free(RRDSET *st, RRDDIM *rd)
             freez((void *)rd->name);
             freez(rd->cache_filename);
             freez(rd->state);
-            munmap(rd, rd->memsize);
+            if (!deleting) {
+                munmap(rd, rd->memsize);
+            }
             break;
 
         case RRD_MEMORY_MODE_ALLOC:
@@ -456,7 +464,8 @@ void rrddim_free(RRDSET *st, RRDDIM *rd)
             freez((void *)rd->name);
             freez(rd->cache_filename);
             freez(rd->state);
-            freez(rd);
+            if (!deleting)
+                freez(rd);
             break;
     }
 }
