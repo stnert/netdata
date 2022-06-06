@@ -23,7 +23,8 @@ const char *database_config[] = {
     "CREATE TABLE IF NOT EXISTS chart_active(chart_id blob PRIMARY KEY, date_created int);",
     "CREATE TABLE IF NOT EXISTS dimension_active(dim_id blob primary key, date_created int);",
     "CREATE TABLE IF NOT EXISTS metadata_migration(filename text, file_size, date_created int);",
-    "CREATE INDEX IF NOT EXISTS ind_d1 on dimension (chart_id, id, name);",
+    "DROP INDEX IF EXISTS ind_d1;",
+    "CREATE INDEX IF NOT EXISTS ind_d2 on dimension (chart_id, name);",
     "CREATE INDEX IF NOT EXISTS ind_c1 on chart (host_id, id, type, name);",
     "CREATE TABLE IF NOT EXISTS chart_label(chart_id blob, source_type int, label_key text, "
     "label_value text, date_created int, PRIMARY KEY (chart_id, label_key));",
@@ -276,6 +277,7 @@ static void rebuild_chart()
 const char *rebuild_dimension_commands[] = {
     "BEGIN TRANSACTION; ",
     "DROP INDEX IF EXISTS ind_d1;" ,
+    "DROP INDEX IF EXISTS ind_d2;" ,
     "DROP TABLE IF EXISTS dimension_backup; " ,
     "CREATE TABLE dimension_backup AS SELECT * FROM dimension; " ,
     "DROP TABLE dimension; " ,
@@ -283,7 +285,7 @@ const char *rebuild_dimension_commands[] = {
         "multiplier int, divisor int , algorithm int, options text);" ,
     "INSERT INTO dimension SELECT distinct * FROM dimension_backup; " ,
     "DROP TABLE dimension_backup;  " ,
-    "CREATE INDEX IF NOT EXISTS ind_d1 on dimension (chart_id, id, name);",
+    "CREATE INDEX IF NOT EXISTS ind_d2 on dimension (chart_id, name);",
     "COMMIT TRANSACTION;",
     NULL
 };
