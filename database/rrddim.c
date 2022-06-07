@@ -171,12 +171,12 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         if (unlikely(rc)) {
             debug(D_METADATALOG, "DIMENSION [%s] metadata updated", rd->id);
 
-//            struct metadata_database_cmd cmd;
-//            memset(&cmd, 0, sizeof(cmd));
-//            cmd.opcode = METADATA_ADD_DIMENSION;
-//            rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
-//            cmd.param[0] = (void *)rd;
-//            metadata_database_enq_cmd(&metasync_worker, &cmd);
+            struct metadata_database_cmd cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.opcode = METADATA_ADD_DIMENSION;
+            rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+            cmd.param[0] = (void *)rd;
+            metadata_database_enq_cmd(&metasync_worker, &cmd);
 //            (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
 //                                      rd->algorithm);
 #if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
