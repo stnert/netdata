@@ -152,6 +152,12 @@ static void timer_cb(uv_timer_t* handle)
 
 #define MAX_CMD_BATCH_SIZE (32)
 
+
+static int store_labels_callback(const char *name, const char *value, RRDLABEL_SRC ls, void *data) {
+    sql_store_chart_label((uuid_t *)data, (int)ls, (char *) name, (char *) value);
+    return 1;
+}
+
 void metadata_database_worker(void *arg)
 {
     worker_register("METASYNC");
@@ -284,16 +290,8 @@ void metadata_database_worker(void *arg)
                     rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
                     break;
                 case METADATA_ADD_CHART_LABEL:
-                    st = (RRDSET *) cmd.param[0];
-                    struct label_index *labels = &st->state->labels;
-                    netdata_rwlock_rdlock(&labels->labels_rwlock);
-                    struct label *lbl = labels->head;
-                    while (lbl) {
-                        sql_store_chart_label(st->chart_uuid, (int)lbl->label_source, lbl->key, lbl->value);
-                        lbl = lbl->next;
-                    }
-                    netdata_rwlock_unlock(&labels->labels_rwlock);
-                    rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
+                      rrdlabels_walkthrough_read(st->state->chart_labels, store_labels_callback, st->chart_uuid);
+                      rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
                     break;
                 case METADATA_ADD_CHART_ACTIVE:
                     st = (RRDSET *) cmd.param[0];
