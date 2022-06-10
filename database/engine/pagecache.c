@@ -1127,7 +1127,7 @@ pg_cache_lookup_next(struct rrdengine_instance *ctx, struct pg_cache_page_index 
         if (!(flags & RRD_PAGE_POPULATED))
             page_not_in_cache = 1;
 
-        if (pg_cache_timedwait_event_unsafe(descr, 1) == UV_ETIMEDOUT) {
+        if (pg_cache_timedwait_event_unsafe(descr, PAGE_CACHE_WAIT_TIMEOUT) == UV_ETIMEDOUT) {
             error_report("Page cache timeout while waiting for page %p : retry count = %d", descr, retry_count);
             ++retry_count;
         }

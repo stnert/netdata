@@ -12,6 +12,7 @@ struct rrdeng_page_descr;
 
 #define INVALID_TIME (0)
 #define MAX_PAGE_CACHE_RETRY_WAIT (3)
+#define PAGE_CACHE_WAIT_TIMEOUT (3)
 
 /* Page flags */
 #define RRD_PAGE_DIRTY          (1LU << 0)
