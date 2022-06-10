@@ -279,8 +279,8 @@ void metadata_database_worker(void *arg)
                     st = (RRDSET *) cmd.param[0];
                     update_chart_metadata(st->chart_uuid, st, (char *) cmd.param[1], (char *) cmd.param[2]);
 
-                    worker_is_busy(METADATA_ADD_CHART_ACTIVE);
-                    store_active_chart(st->chart_uuid);
+//                    worker_is_busy(METADATA_ADD_CHART_ACTIVE);
+//                    store_active_chart(st->chart_uuid);
 
                     worker_is_busy(METADATA_ADD_CHART_HASH);
                     compute_chart_hash(st, 1);
