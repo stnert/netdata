@@ -1836,10 +1836,8 @@ void compute_chart_hash(RRDSET *st, int action)
     EVP_MD_CTX *evpctx;
     unsigned char hash_value[EVP_MAX_MD_SIZE];
     unsigned int hash_len;
-    char  priority_str[32];
 
     if (!action) {
-        sprintf(priority_str, "%ld", st->priority);
 
         evpctx = EVP_MD_CTX_create();
         EVP_DigestInit_ex(evpctx, EVP_sha256(), NULL);
@@ -1853,16 +1851,11 @@ void compute_chart_hash(RRDSET *st, int action)
         EVP_DigestUpdate(evpctx, st->plugin_name, strlen(st->plugin_name));
         if (st->module_name)
             EVP_DigestUpdate(evpctx, st->module_name, strlen(st->module_name));
-        //    EVP_DigestUpdate(evpctx, priority_str, strlen(priority_str));
         EVP_DigestUpdate(evpctx, &st->priority, sizeof(st->priority));
         EVP_DigestUpdate(evpctx, &st->chart_type, sizeof(st->chart_type));
         EVP_DigestFinal_ex(evpctx, hash_value, &hash_len);
         EVP_MD_CTX_destroy(evpctx);
         fatal_assert(hash_len > sizeof(uuid_t));
-
-//        char uuid_str[GUID_LEN + 1];
- //       uuid_unparse_lower(*((uuid_t *)&hash_value), uuid_str);
-        //info("Calculating HASH %s for chart %s", uuid_str, st->name);
         uuid_copy(st->state->hash_id, *((uuid_t *)&hash_value));
         return;
     }
