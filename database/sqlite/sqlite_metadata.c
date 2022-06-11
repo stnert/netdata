@@ -295,7 +295,7 @@ void metadata_database_worker(void *arg)
                     break;
                 case METADATA_ADD_CHART_ACTIVE:
                     st = (RRDSET *) cmd.param[0];
-                    store_active_chart(st->chart_uuid);
+                    //store_active_chart(st->chart_uuid);
                     rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
                     break;
                 case METADATA_ADD_CHART_HASH:
@@ -324,7 +324,7 @@ void metadata_database_worker(void *arg)
                     break;
                 case METADATA_ADD_DIMENSION_ACTIVE:
                     rd = (RRDDIM *) cmd.param[0];
-                    store_active_dimension(&rd->state->metric_uuid);
+//                    store_active_dimension(&rd->state->metric_uuid);
                     rrd_atomic_fetch_add(&rd->state->metadata_update_count, -1);
                     break;
                 case METADATA_ADD_DIMENSION_OPTION:
