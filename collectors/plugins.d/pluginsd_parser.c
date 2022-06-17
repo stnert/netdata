@@ -159,7 +159,7 @@ PARSER_RC pluginsd_dimension_action(void *user, RRDSET *st, char *id, char *name
             unhide_dimension = -1;
     }
 
-    if (unlikely(unhide_dimension != -1)) {
+    if (unlikely(unhide_dimension != -1 && !rrddim_flag_check(rd, RRDDIM_FLAG_OBSOLETE))) {
         memset(&cmd, 0, sizeof(cmd));
         cmd.opcode = METADATA_ADD_DIMENSION_OPTION;
         INC(st->state->metadata_update_count);
