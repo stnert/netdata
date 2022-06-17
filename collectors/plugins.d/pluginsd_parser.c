@@ -162,7 +162,7 @@ PARSER_RC pluginsd_dimension_action(void *user, RRDSET *st, char *id, char *name
     if (unlikely(unhide_dimension != -1)) {
         memset(&cmd, 0, sizeof(cmd));
         cmd.opcode = METADATA_ADD_DIMENSION_OPTION;
-        rrd_atomic_fetch_add(&rd->state->metadata_update_count, 1);
+        INC(st->state->metadata_update_count);
         cmd.param[0] = (void *)rd;
         cmd.param[1] = unhide_dimension ? NULL : strdupz("hidden");
         metadata_database_enq_cmd(&metasync_worker, &cmd);

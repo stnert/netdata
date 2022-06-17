@@ -6,6 +6,9 @@
 #include "sqlite3.h"
 #include "sqlite_functions.h"
 
+#define INC(x)   __atomic_fetch_add(&x, 1, __ATOMIC_SEQ_CST)
+#define DEC(x)   __atomic_fetch_add(&x, -1, __ATOMIC_SEQ_CST)
+
 extern sqlite3 *db_meta;
 
 #define METADATA_DATABASE_CMD_Q_MAX_SIZE (100000)

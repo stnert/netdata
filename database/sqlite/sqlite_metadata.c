@@ -273,7 +273,7 @@ void metadata_database_worker(void *arg)
                     update_chart_metadata(st->chart_uuid, st, (char *) cmd.param[1], (char *) cmd.param[2]);
                     freez(cmd.param[1]);
                     freez(cmd.param[2]);
-                    rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_ADD_CHART_FULL:
                     st = (RRDSET *) cmd.param[0];
@@ -287,21 +287,21 @@ void metadata_database_worker(void *arg)
 
                     freez(cmd.param[1]);
                     freez(cmd.param[2]);
-                    rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_ADD_CHART_LABEL:
                       rrdlabels_walkthrough_read(st->state->chart_labels, store_labels_callback, st->chart_uuid);
-                      rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
+                      DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_ADD_CHART_ACTIVE:
                     st = (RRDSET *) cmd.param[0];
                     //store_active_chart(st->chart_uuid);
-                    rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_ADD_CHART_HASH:
                     st = (RRDSET *) cmd.param[0];
                     compute_chart_hash(st, 1);
-                    rrd_atomic_fetch_add(&st->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_ADD_DIMENSION:
                     rd = (RRDDIM *) cmd.param[0];
@@ -315,7 +315,7 @@ void metadata_database_worker(void *arg)
                     if (unlikely(rc))
                         error_report("Failed to store dimension %s", rd->id);
                     //freez(uuid);
-                    rrd_atomic_fetch_add(&rd->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_DEL_DIMENSION:
                     uuid = (uuid_t *) cmd.param[0];
@@ -325,7 +325,7 @@ void metadata_database_worker(void *arg)
                 case METADATA_ADD_DIMENSION_ACTIVE:
                     rd = (RRDDIM *) cmd.param[0];
 //                    store_active_dimension(&rd->state->metric_uuid);
-                    rrd_atomic_fetch_add(&rd->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 case METADATA_ADD_DIMENSION_OPTION:
                     rd = (RRDDIM *) cmd.param[0];
@@ -335,7 +335,7 @@ void metadata_database_worker(void *arg)
                     else
                         (void)sql_set_dimension_option(&rd->state->metric_uuid, (char *) cmd.param[1]);
                     freez(cmd.param[1]);
-                    rrd_atomic_fetch_add(&rd->state->metadata_update_count, -1);
+                    DEC(st->state->metadata_update_count);
                     break;
                 default:
                     break;
